@@ -8,11 +8,11 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
   <style>
-    /* Stop Mobirise/Bootstrap touching anything inside our app */
+    /* ── Isolate entire app from Mobirise/Bootstrap ── */
     #pid-root { all: initial; display: block; }
     #pid-root *, #pid-root *::before, #pid-root *::after { box-sizing: border-box; }
 
-    /* Range input hard overrides — Bootstrap zeroes these out */
+    /* ── Range track ── */
     #pid-root input[type="range"] {
       all: revert;
       -webkit-appearance: none !important;
@@ -20,40 +20,81 @@
       display: block !important;
       width: 100% !important;
       height: 4px !important;
-      background: #1e2d45 !important;
       border-radius: 4px !important;
+      background: #1e2d45 !important;
       outline: none !important;
       border: none !important;
       padding: 0 !important;
-      margin: 4px 0 !important;
+      margin: 6px 0 !important;
       cursor: pointer !important;
       pointer-events: auto !important;
       opacity: 1 !important;
       position: relative !important;
       z-index: 10 !important;
     }
-    #pid-root input[type="range"]::-webkit-slider-thumb {
+
+    /* ── Thumb: one rule per colour used in the app ── */
+    /* teal  – Joint 1 Kp/Ki/Kd */
+    #pid-root input[type="range"].thumb-teal::-webkit-slider-thumb {
       -webkit-appearance: none !important;
-      width: 14px !important; height: 14px !important;
-      border-radius: 50% !important;
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #00ffc8 !important;
+      box-shadow: 0 0 6px #00ffc8 !important;
       cursor: pointer !important;
-      border: none !important;
     }
-    #pid-root input[type="range"]::-moz-range-thumb {
-      width: 14px !important; height: 14px !important;
-      border-radius: 50% !important;
+    #pid-root input[type="range"].thumb-teal::-moz-range-thumb {
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #00ffc8 !important;
+      box-shadow: 0 0 6px #00ffc8 !important;
       cursor: pointer !important;
-      border: none !important;
     }
+    /* orange – Joint 2 Kp/Ki/Kd */
+    #pid-root input[type="range"].thumb-orange::-webkit-slider-thumb {
+      -webkit-appearance: none !important;
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #ff6b35 !important;
+      box-shadow: 0 0 6px #ff6b35 !important;
+      cursor: pointer !important;
+    }
+    #pid-root input[type="range"].thumb-orange::-moz-range-thumb {
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #ff6b35 !important;
+      box-shadow: 0 0 6px #ff6b35 !important;
+      cursor: pointer !important;
+    }
+    /* yellow – target angle sliders */
+    #pid-root input[type="range"].thumb-yellow::-webkit-slider-thumb {
+      -webkit-appearance: none !important;
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #ffe566 !important;
+      box-shadow: 0 0 6px #ffe566 !important;
+      cursor: pointer !important;
+    }
+    #pid-root input[type="range"].thumb-yellow::-moz-range-thumb {
+      width: 16px !important; height: 16px !important;
+      border-radius: 50% !important; border: none !important;
+      background: #ffe566 !important;
+      box-shadow: 0 0 6px #ffe566 !important;
+      cursor: pointer !important;
+    }
+
+    /* ── Buttons ── */
     #pid-root button {
       all: unset;
+      display: inline-block !important;
       cursor: pointer !important;
       pointer-events: auto !important;
-      display: inline-block !important;
     }
-    #pid-root button:hover { opacity: 0.82; }
+    #pid-root button:hover { opacity: 0.8; }
+
     @media (max-width: 860px) {
       .pid-grid { grid-template-columns: 1fr !important; }
+      .pid-plot-grid { grid-template-columns: 1fr !important; }
     }
   </style>
 </head>
@@ -61,7 +102,8 @@
 <div id="pid-root"></div>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback}=React;
-const C={bg:"#0a0e14",panel:"#0f1520",border:"#1e2d45",accent1:"#00ffc8",accent2:"#ff6b35",error:"#ff3d5a",grid:"#111d2e",text:"#c8d8e8",muted:"#4a6080",target:"#ffe566"};
+const C={bg:"#0a0e14",panel:"#0f1520",border:"#1e2d45",accent1:"#00ffc8",accent2:"#ff6b35",
+         error:"#ff3d5a",grid:"#111d2e",text:"#c8d8e8",muted:"#4a6080",target:"#ffe566"};
 const L1=120,L2=90,I1=2.0,I2=0.8,B1=1.2,B2=0.6,MAX_TORQUE=40,MAX_INTEGRAL=30,HISTORY_LEN=400;
 function clamp(v,lo,hi){return Math.min(Math.max(v,lo),hi);}
 function makePID(kp,ki,kd){return{kp,ki,kd,integral:0,prevError:0};}
@@ -73,29 +115,47 @@ function stepPID(pid,err,dt){
   const out=pid.kp*err+pid.ki*pid.integral+pid.kd*d;
   return isFinite(out)?clamp(out,-MAX_TORQUE,MAX_TORQUE):0;
 }
-function fk(t1,t2){const x1=L1*Math.cos(t1),y1=L1*Math.sin(t1);return{x1,y1,x2:x1+L2*Math.cos(t1+t2),y2:y1+L2*Math.sin(t1+t2)};}
+function fk(t1,t2){
+  const x1=L1*Math.cos(t1),y1=L1*Math.sin(t1);
+  return{x1,y1,x2:x1+L2*Math.cos(t1+t2),y2:y1+L2*Math.sin(t1+t2)};
+}
+
+/* colour → CSS class mapping (defined statically in <head> so Bootstrap can't win) */
+function thumbClass(color){
+  if(color==="#00ffc8") return "thumb-teal";
+  if(color==="#ff6b35") return "thumb-orange";
+  if(color==="#ffe566") return "thumb-yellow";
+  return "thumb-teal";
+}
 
 function MiniPlot({data1,data2,label1,label2,color1,color2,title,yLabel,yMin,yMax}){
   const ref=useRef();
   useEffect(()=>{
-    const cv=ref.current;if(!cv)return;
+    const cv=ref.current; if(!cv) return;
     const ctx=cv.getContext("2d"),W=cv.width,H=cv.height;
     const P={t:24,r:12,b:28,l:44},PW=W-P.l-P.r,PH=H-P.t-P.b;
-    ctx.clearRect(0,0,W,H);ctx.fillStyle="#080c12";ctx.fillRect(0,0,W,H);
-    ctx.strokeStyle=C.grid;ctx.lineWidth=1;
+    ctx.clearRect(0,0,W,H); ctx.fillStyle="#080c12"; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle=C.grid; ctx.lineWidth=1;
     for(let i=0;i<=4;i++){
-      const y=P.t+(i/4)*PH;ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+PW,y);ctx.stroke();
+      const y=P.t+(i/4)*PH;
+      ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+PW,y);ctx.stroke();
       ctx.fillStyle=C.muted;ctx.font="10px monospace";ctx.textAlign="right";
       ctx.fillText((yMax-(i/4)*(yMax-yMin)).toFixed(1),P.l-4,y+3);
     }
     if(yMin<0&&yMax>0){
       const zy=P.t+PH*(yMax/(yMax-yMin));
-      ctx.strokeStyle="#2a4060";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(P.l,zy);ctx.lineTo(P.l+PW,zy);ctx.stroke();
+      ctx.strokeStyle="#2a4060";ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.moveTo(P.l,zy);ctx.lineTo(P.l+PW,zy);ctx.stroke();
     }
     [[data1,color1],[data2,color2]].forEach(([data,color])=>{
       if(!data||data.length<2)return;
-      ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.shadowColor=color;ctx.shadowBlur=4;ctx.beginPath();
-      data.forEach((v,i)=>{const x=P.l+(i/(HISTORY_LEN-1))*PW,y=P.t+PH*(1-(v-yMin)/(yMax-yMin));i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+      ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.shadowColor=color;ctx.shadowBlur=4;
+      ctx.beginPath();
+      data.forEach((v,i)=>{
+        const x=P.l+(i/(HISTORY_LEN-1))*PW;
+        const y=P.t+PH*(1-(v-yMin)/(yMax-yMin));
+        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      });
       ctx.stroke();ctx.shadowBlur=0;
     });
     ctx.fillStyle=C.text;ctx.font="bold 11px monospace";ctx.textAlign="left";ctx.fillText(title,P.l,16);
@@ -103,9 +163,11 @@ function MiniPlot({data1,data2,label1,label2,color1,color2,title,yLabel,yMin,yMa
       ctx.fillStyle=col;ctx.fillRect(W-140+i*68,8,16,2);
       ctx.fillStyle=C.muted;ctx.font="9px monospace";ctx.textAlign="left";ctx.fillText(lbl,W-120+i*68,14);
     });
-    ctx.save();ctx.translate(10,H/2);ctx.rotate(-Math.PI/2);ctx.fillStyle=C.muted;ctx.font="9px monospace";ctx.textAlign="center";ctx.fillText(yLabel,0,0);ctx.restore();
+    ctx.save();ctx.translate(10,H/2);ctx.rotate(-Math.PI/2);
+    ctx.fillStyle=C.muted;ctx.font="9px monospace";ctx.textAlign="center";ctx.fillText(yLabel,0,0);ctx.restore();
   });
-  return <canvas ref={ref} width={440} height={130} style={{width:"100%",borderRadius:4,border:`1px solid ${C.border}`}}/>;
+  return <canvas ref={ref} width={440} height={130}
+    style={{width:"100%",borderRadius:4,border:`1px solid ${C.border}`}}/>;
 }
 
 function ArmCanvas({t1,t2,targetT1,targetT2,trail}){
@@ -113,7 +175,9 @@ function ArmCanvas({t1,t2,targetT1,targetT2,trail}){
   return(
     <svg width="320" height="320" style={{background:"#080c12",borderRadius:8,border:`1px solid ${C.border}`,display:"block"}}>
       {[60,120,180,210].map(r=><circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke={C.grid} strokeWidth={1}/>)}
-      {[0,45,90,135].map(a=>{const rad=a*Math.PI/180;return <line key={a} x1={CX-220*Math.cos(rad)} y1={CY-220*Math.sin(rad)} x2={CX+220*Math.cos(rad)} y2={CY+220*Math.sin(rad)} stroke={C.grid} strokeWidth={1}/>;} )}
+      {[0,45,90,135].map(a=>{const rad=a*Math.PI/180;return(
+        <line key={a} x1={CX-220*Math.cos(rad)} y1={CY-220*Math.sin(rad)} x2={CX+220*Math.cos(rad)} y2={CY+220*Math.sin(rad)} stroke={C.grid} strokeWidth={1}/>
+      );})}
       {trail.length>1&&<polyline points={trail.map(([x,y])=>`${CX+x},${CY-y}`).join(" ")} fill="none" stroke={C.accent1} strokeWidth={1.5} strokeOpacity={0.35}/>}
       <line x1={CX} y1={CY} x2={CX+tgt.x1} y2={CY-tgt.y1} stroke={C.target} strokeWidth={3} strokeOpacity={0.25} strokeDasharray="6 4"/>
       <line x1={CX+tgt.x1} y1={CY-tgt.y1} x2={CX+tgt.x2} y2={CY-tgt.y2} stroke={C.target} strokeWidth={2.5} strokeOpacity={0.25} strokeDasharray="5 4"/>
@@ -123,9 +187,12 @@ function ArmCanvas({t1,t2,targetT1,targetT2,trail}){
       <line x1={CX} y1={CY} x2={CX+cur.x1} y2={CY-cur.y1} stroke={C.accent1} strokeWidth={2} strokeLinecap="round"/>
       <line x1={CX+cur.x1} y1={CY-cur.y1} x2={CX+cur.x2} y2={CY-cur.y2} stroke={C.accent2} strokeWidth={4} strokeLinecap="round" filter="url(#g2)"/>
       <line x1={CX+cur.x1} y1={CY-cur.y1} x2={CX+cur.x2} y2={CY-cur.y2} stroke={C.accent2} strokeWidth={2} strokeLinecap="round"/>
-      <circle cx={CX} cy={CY} r={9} fill={C.panel} stroke={C.accent1} strokeWidth={2.5}/><circle cx={CX} cy={CY} r={3} fill={C.accent1}/>
-      <circle cx={CX+cur.x1} cy={CY-cur.y1} r={7} fill={C.panel} stroke={C.accent2} strokeWidth={2}/><circle cx={CX+cur.x1} cy={CY-cur.y1} r={2.5} fill={C.accent2}/>
-      <circle cx={CX+cur.x2} cy={CY-cur.y2} r={6} fill={C.accent2} fillOpacity={0.3} stroke={C.accent2} strokeWidth={1.5}/><circle cx={CX+cur.x2} cy={CY-cur.y2} r={2.5} fill={C.accent2}/>
+      <circle cx={CX} cy={CY} r={9} fill={C.panel} stroke={C.accent1} strokeWidth={2.5}/>
+      <circle cx={CX} cy={CY} r={3} fill={C.accent1}/>
+      <circle cx={CX+cur.x1} cy={CY-cur.y1} r={7} fill={C.panel} stroke={C.accent2} strokeWidth={2}/>
+      <circle cx={CX+cur.x1} cy={CY-cur.y1} r={2.5} fill={C.accent2}/>
+      <circle cx={CX+cur.x2} cy={CY-cur.y2} r={6} fill={C.accent2} fillOpacity={0.3} stroke={C.accent2} strokeWidth={1.5}/>
+      <circle cx={CX+cur.x2} cy={CY-cur.y2} r={2.5} fill={C.accent2}/>
       <defs>
         <filter id="g1"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         <filter id="g2"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
@@ -134,33 +201,40 @@ function ArmCanvas({t1,t2,targetT1,targetT2,trail}){
   );
 }
 
-function Slider({id,label,value,min,max,step,onChange,color,desc}){
+function Slider({label,value,min,max,step,onChange,color,desc}){
   return(
-    <div style={{marginBottom:12}}>
-      <style>{`#pid-root #${id}::-webkit-slider-thumb{background:${color}!important;box-shadow:0 0 4px ${color};}#pid-root #${id}::-moz-range-thumb{background:${color}!important;}`}</style>
+    <div style={{marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
         <span style={{color:C.muted,fontFamily:"monospace",fontSize:11,letterSpacing:2,textTransform:"uppercase"}}>{label}</span>
         <span style={{color,fontFamily:"monospace",fontSize:13,fontWeight:"bold",minWidth:48,textAlign:"right"}}>{value.toFixed(2)}</span>
       </div>
-      <input id={id} type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(parseFloat(e.target.value))}/>
+      <input
+        type="range"
+        className={thumbClass(color)}
+        min={min} max={max} step={step} value={value}
+        onChange={e=>onChange(parseFloat(e.target.value))}
+      />
       <div style={{color:C.muted,fontSize:9,fontFamily:"monospace",marginTop:2,opacity:0.7}}>{desc}</div>
     </div>
   );
 }
 
 function App(){
-  const [t1,setT1]=useState(0.3);const [t2,setT2]=useState(0.5);
-  const [v1,setV1]=useState(0);const [v2,setV2]=useState(0);
-  const [tgt1,setTgt1]=useState(0.8);const [tgt2,setTgt2]=useState(1.0);
-  const [kp1,setKp1]=useState(6);const [ki1,setKi1]=useState(0.3);const [kd1,setKd1]=useState(1.8);
-  const [kp2,setKp2]=useState(5);const [ki2,setKi2]=useState(0.2);const [kd2,setKd2]=useState(1.5);
-  const [running,setRunning]=useState(false);const [plots,setPlots]=useState(false);const [time,setTime]=useState(0);
-  const [he1,sHe1]=useState([]);const [he2,sHe2]=useState([]);
-  const [hu1,sHu1]=useState([]);const [hu2,sHu2]=useState([]);
-  const [ht1,sHt1]=useState([]);const [ht2,sHt2]=useState([]);
+  const [t1,setT1]=useState(0.3); const [t2,setT2]=useState(0.5);
+  const [v1,setV1]=useState(0);   const [v2,setV2]=useState(0);
+  const [tgt1,setTgt1]=useState(0.8); const [tgt2,setTgt2]=useState(1.0);
+  const [kp1,setKp1]=useState(6);   const [ki1,setKi1]=useState(0.3); const [kd1,setKd1]=useState(1.8);
+  const [kp2,setKp2]=useState(5);   const [ki2,setKi2]=useState(0.2); const [kd2,setKd2]=useState(1.5);
+  const [running,setRunning]=useState(false); const [plots,setPlots]=useState(false); const [time,setTime]=useState(0);
+  const [he1,sHe1]=useState([]); const [he2,sHe2]=useState([]);
+  const [hu1,sHu1]=useState([]); const [hu2,sHu2]=useState([]);
+  const [ht1,sHt1]=useState([]); const [ht2,sHt2]=useState([]);
   const [trail,setTrail]=useState([]);
-  const S=useRef({t1:0.3,t2:0.5,v1:0,v2:0,pid1:makePID(6,0.3,1.8),pid2:makePID(5,0.2,1.5),he1:[],he2:[],hu1:[],hu2:[],ht1:[],ht2:[],trail:[],time:0,tgt1:0.8,tgt2:1.0});
-  const raf=useRef();const lt=useRef(null);
+
+  const S=useRef({t1:0.3,t2:0.5,v1:0,v2:0,
+    pid1:makePID(6,0.3,1.8),pid2:makePID(5,0.2,1.5),
+    he1:[],he2:[],hu1:[],hu2:[],ht1:[],ht2:[],trail:[],time:0,tgt1:0.8,tgt2:1.0});
+  const raf=useRef(); const lt=useRef(null);
 
   useEffect(()=>{S.current.pid1.kp=kp1;S.current.pid1.ki=ki1;S.current.pid1.kd=kd1;},[kp1,ki1,kd1]);
   useEffect(()=>{S.current.pid2.kp=kp2;S.current.pid2.ki=ki2;S.current.pid2.kd=kd2;},[kp2,ki2,kd2]);
@@ -168,47 +242,57 @@ function App(){
 
   const tick=useCallback((ts)=>{
     if(lt.current===null){lt.current=ts;raf.current=requestAnimationFrame(tick);return;}
-    const el=Math.min((ts-lt.current)/1000,0.05);lt.current=ts;
+    const el=Math.min((ts-lt.current)/1000,0.05); lt.current=ts;
     if(el<0.001){raf.current=requestAnimationFrame(tick);return;}
     const s=S.current,dt=el/4;
     for(let i=0;i<4;i++){
       const e1=s.tgt1-s.t1,e2=s.tgt2-s.t2;
       const u1=stepPID(s.pid1,e1,dt),u2=stepPID(s.pid2,e2,dt);
-      s.v1+=((u1-B1*s.v1)/I1)*dt;s.v2+=((u2-B2*s.v2)/I2)*dt;
-      s.t1+=s.v1*dt;s.t2+=s.v2*dt;s.time+=dt;
+      s.v1+=((u1-B1*s.v1)/I1)*dt; s.v2+=((u2-B2*s.v2)/I2)*dt;
+      s.t1+=s.v1*dt; s.t2+=s.v2*dt; s.time+=dt;
     }
-    const {x2,y2}=fk(s.t1,s.t2);s.trail=[...s.trail.slice(-150),[x2,y2]];
+    const {x2,y2}=fk(s.t1,s.t2);
+    s.trail=[...s.trail.slice(-150),[x2,y2]];
     const e1f=s.tgt1-s.t1,e2f=s.tgt2-s.t2;
-    s.he1=[...s.he1.slice(-(HISTORY_LEN-1)),e1f];s.he2=[...s.he2.slice(-(HISTORY_LEN-1)),e2f];
+    s.he1=[...s.he1.slice(-(HISTORY_LEN-1)),e1f];
+    s.he2=[...s.he2.slice(-(HISTORY_LEN-1)),e2f];
     s.hu1=[...s.hu1.slice(-(HISTORY_LEN-1)),clamp(s.pid1.kp*e1f,-MAX_TORQUE,MAX_TORQUE)];
     s.hu2=[...s.hu2.slice(-(HISTORY_LEN-1)),clamp(s.pid2.kp*e2f,-MAX_TORQUE,MAX_TORQUE)];
-    s.ht1=[...s.ht1.slice(-(HISTORY_LEN-1)),s.t1];s.ht2=[...s.ht2.slice(-(HISTORY_LEN-1)),s.t2];
-    setT1(s.t1);setT2(s.t2);setV1(s.v1);setV2(s.v2);setTime(s.time);setTrail([...s.trail]);
+    s.ht1=[...s.ht1.slice(-(HISTORY_LEN-1)),s.t1];
+    s.ht2=[...s.ht2.slice(-(HISTORY_LEN-1)),s.t2];
+    setT1(s.t1);setT2(s.t2);setV1(s.v1);setV2(s.v2);
+    setTime(s.time);setTrail([...s.trail]);
     sHe1([...s.he1]);sHe2([...s.he2]);sHu1([...s.hu1]);sHu2([...s.hu2]);sHt1([...s.ht1]);sHt2([...s.ht2]);
     raf.current=requestAnimationFrame(tick);
   },[]);
 
   const start=()=>{
-    if(running)return;setRunning(true);setPlots(true);
-    const s=S.current;s.t1=t1;s.t2=t2;s.v1=0;s.v2=0;
+    if(running)return; setRunning(true); setPlots(true);
+    const s=S.current; s.t1=t1;s.t2=t2;s.v1=0;s.v2=0;
     resetPID(s.pid1);resetPID(s.pid2);
     s.he1=[];s.he2=[];s.hu1=[];s.hu2=[];s.ht1=[];s.ht2=[];s.trail=[];s.time=0;
-    lt.current=null;raf.current=requestAnimationFrame(tick);
+    lt.current=null; raf.current=requestAnimationFrame(tick);
   };
   const stop=()=>{setRunning(false);if(raf.current)cancelAnimationFrame(raf.current);};
   const reset=()=>{
-    stop();setT1(0.3);setT2(0.5);setV1(0);setV2(0);setTime(0);setTrail([]);
+    stop(); setT1(0.3);setT2(0.5);setV1(0);setV2(0);setTime(0);setTrail([]);
     sHe1([]);sHe2([]);sHu1([]);sHu2([]);sHt1([]);sHt2([]);setPlots(false);
-    const s=S.current;s.t1=0.3;s.t2=0.5;s.v1=0;s.v2=0;resetPID(s.pid1);resetPID(s.pid2);
+    const s=S.current; s.t1=0.3;s.t2=0.5;s.v1=0;s.v2=0;resetPID(s.pid1);resetPID(s.pid2);
   };
 
   const e1=tgt1-t1,e2=tgt2-t2;
   const settled=Math.abs(e1)<0.01&&Math.abs(e2)<0.01&&Math.abs(v1)<0.01&&Math.abs(v2)<0.01;
 
+  const joints=[
+    {joint:"Joint 1 — Base", color:C.accent1,kp:kp1,setKp:setKp1,ki:ki1,setKi:setKi1,kd:kd1,setKd:setKd1,tgt:tgt1,setTgt:setTgt1,t:t1,e:e1,sym:"θ₁"},
+    {joint:"Joint 2 — Elbow",color:C.accent2,kp:kp2,setKp:setKp2,ki:ki2,setKi:setKi2,kd:kd2,setKd:setKd2,tgt:tgt2,setTgt:setTgt2,t:t2,e:e2,sym:"θ₂"},
+  ];
+
   return(
     <div style={{background:C.bg,minHeight:"100vh",color:C.text,fontFamily:"monospace",padding:"0 0 40px"}}>
+      {/* Header */}
       <div style={{background:C.panel,borderBottom:`1px solid ${C.border}`,padding:"14px 20px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-        <div style={{width:8,height:8,borderRadius:"50%",background:C.accent1,boxShadow:`0 0 8px ${C.accent1}`}}/>
+        <div style={{width:8,height:8,borderRadius:"50%",background:C.accent1,boxShadow:`0 0 8px ${C.accent1}`,flexShrink:0}}/>
         <div>
           <div style={{fontSize:15,fontWeight:"bold",letterSpacing:3,color:C.accent1,textTransform:"uppercase"}}>PID Control Lab</div>
           <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginTop:2}}>2-LINK ROBOTIC ARM · POSITION CONTROL</div>
@@ -221,8 +305,12 @@ function App(){
       </div>
 
       <div style={{maxWidth:1100,margin:"0 auto",padding:"18px 16px"}}>
+        {/* Concept bar */}
         <div style={{background:"#0a1520",border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 16px",marginBottom:18,display:"flex",gap:20,flexWrap:"wrap"}}>
-          {[["P — Proportional","Reacts to current error. Higher Kp = faster but may overshoot.",C.accent1],["I — Integral","Eliminates steady-state offset. Too high = oscillation.",C.accent2],["D — Derivative","Dampens overshoot. Too high = noise amplification.","#a78bfa"]].map(([title,desc,col])=>(
+          {[["P — Proportional","Reacts to current error. Higher Kp = faster but may overshoot.",C.accent1],
+            ["I — Integral","Eliminates steady-state offset. Too high = oscillation.",C.accent2],
+            ["D — Derivative","Dampens overshoot. Too high = noise amplification.","#a78bfa"]
+          ].map(([title,desc,col])=>(
             <div key={title} style={{flex:"1 1 180px"}}>
               <div style={{color:col,fontSize:10,fontWeight:"bold",letterSpacing:1,marginBottom:2}}>{title}</div>
               <div style={{color:C.muted,fontSize:9,lineHeight:1.5}}>{desc}</div>
@@ -230,21 +318,19 @@ function App(){
           ))}
         </div>
 
+        {/* Main grid */}
         <div className="pid-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14,alignItems:"start"}}>
-          {[
-            {joint:"Joint 1 — Base", color:C.accent1,kp:kp1,setKp:setKp1,ki:ki1,setKi:setKi1,kd:kd1,setKd:setKd1,tgt:tgt1,setTgt:setTgt1,t:t1,e:e1,lbl:"j1"},
-            {joint:"Joint 2 — Elbow",color:C.accent2,kp:kp2,setKp:setKp2,ki:ki2,setKi:setKi2,kd:kd2,setKd:setKd2,tgt:tgt2,setTgt:setTgt2,t:t2,e:e2,lbl:"j2"},
-          ].map(({joint,color,kp,setKp,ki,setKi,kd,setKd,tgt,setTgt,t,e,lbl})=>(
+          {joints.map(({joint,color,kp,setKp,ki,setKi,kd,setKd,tgt,setTgt,t,e,sym})=>(
             <div key={joint} style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-                <div style={{width:9,height:9,borderRadius:"50%",background:color}}/>
+                <div style={{width:9,height:9,borderRadius:"50%",background:color,flexShrink:0}}/>
                 <span style={{color,fontSize:11,letterSpacing:2,textTransform:"uppercase"}}>{joint}</span>
               </div>
-              <Slider id={`${lbl}-kp`} label="Kp" value={kp} min={0} max={20} step={0.1} onChange={setKp} color={color} desc="Proportional gain"/>
-              <Slider id={`${lbl}-ki`} label="Ki" value={ki} min={0} max={5}  step={0.05} onChange={setKi} color={color} desc="Integral gain"/>
-              <Slider id={`${lbl}-kd`} label="Kd" value={kd} min={0} max={8}  step={0.05} onChange={setKd} color={color} desc="Derivative gain"/>
-              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8}}>
-                <Slider id={`${lbl}-tgt`} label={`${lbl==="j1"?"θ₁":"θ₂"} target`} value={tgt} min={-Math.PI} max={Math.PI} step={0.05} onChange={setTgt} color={C.target} desc={`Target: ${(tgt*180/Math.PI).toFixed(1)}°`}/>
+              <Slider label="Kp" value={kp} min={0} max={20} step={0.1} onChange={setKp} color={color} desc="Proportional gain"/>
+              <Slider label="Ki" value={ki} min={0} max={5}  step={0.05} onChange={setKi} color={color} desc="Integral gain"/>
+              <Slider label="Kd" value={kd} min={0} max={8}  step={0.05} onChange={setKd} color={color} desc="Derivative gain"/>
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:4}}>
+                <Slider label={`${sym} target`} value={tgt} min={-Math.PI} max={Math.PI} step={0.05} onChange={setTgt} color={C.target} desc={`Target: ${(tgt*180/Math.PI).toFixed(1)}°`}/>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:6,fontSize:9}}>
                 <div style={{background:"#0a1520",padding:7,borderRadius:4}}>
@@ -259,40 +345,69 @@ function App(){
             </div>
           ))}
 
+          {/* Arm + controls */}
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             <ArmCanvas t1={t1} t2={t2} targetT1={tgt1} targetT2={tgt2} trail={trail}/>
             <div style={{display:"flex",gap:8}}>
-              {[{label:running?"■ STOP":"▶ RUN",action:running?stop:start,color:running?C.error:C.accent1},{label:"↺ RESET",action:reset,color:C.muted}].map(({label,action,color})=>(
-                <button key={label} onClick={action} style={{flex:1,background:"transparent",border:`1px solid ${color}`,color,padding:"7px 0",borderRadius:4,fontFamily:"monospace",fontSize:10,letterSpacing:2,textAlign:"center",display:"block",width:"50%"}}>{label}</button>
+              {[{label:running?"■ STOP":"▶ RUN",action:running?stop:start,color:running?C.error:C.accent1},
+                {label:"↺ RESET",action:reset,color:C.muted}].map(({label,action,color})=>(
+                <button key={label} onClick={action}
+                  style={{flex:1,background:"transparent",border:`1px solid ${color}`,color,
+                          padding:"8px 0",borderRadius:4,fontFamily:"monospace",fontSize:10,
+                          letterSpacing:2,textAlign:"center",display:"block"}}>
+                  {label}
+                </button>
               ))}
             </div>
             <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:6,padding:10}}>
               <div style={{fontSize:9,color:C.muted,letterSpacing:1,marginBottom:6}}>PRESETS</div>
-              {[{label:"P Only",kp1:6,ki1:0,kd1:0,kp2:5,ki2:0,kd2:0},{label:"Well-tuned PID",kp1:6,ki1:0.3,kd1:1.8,kp2:5,ki2:0.2,kd2:1.5},{label:"Aggressive",kp1:15,ki1:1,kd1:0.5,kp2:12,ki2:0.8,kd2:0.4},{label:"Overdamped",kp1:2,ki1:0.1,kd1:4,kp2:2,ki2:0.1,kd2:3.5}].map(p=>(
-                <button key={p.label} onClick={()=>{setKp1(p.kp1);setKi1(p.ki1);setKd1(p.kd1);setKp2(p.kp2);setKi2(p.ki2);setKd2(p.kd2);}}
-                  style={{display:"block",width:"100%",background:"transparent",border:`1px solid ${C.border}`,color:C.muted,padding:"4px 8px",borderRadius:3,fontFamily:"monospace",fontSize:9,letterSpacing:1,marginBottom:3,textAlign:"left"}}>{p.label}</button>
+              {[{label:"P Only (no I, no D)",    kp1:6, ki1:0,   kd1:0,   kp2:5,  ki2:0,   kd2:0},
+                {label:"Well-tuned PID",         kp1:6, ki1:0.3, kd1:1.8, kp2:5,  ki2:0.2, kd2:1.5},
+                {label:"Aggressive (overshoot)", kp1:15,ki1:1,   kd1:0.5, kp2:12, ki2:0.8, kd2:0.4},
+                {label:"Overdamped (sluggish)",  kp1:2, ki1:0.1, kd1:4,   kp2:2,  ki2:0.1, kd2:3.5},
+              ].map(p=>(
+                <button key={p.label}
+                  onClick={()=>{setKp1(p.kp1);setKi1(p.ki1);setKd1(p.kd1);setKp2(p.kp2);setKi2(p.ki2);setKd2(p.kd2);}}
+                  style={{display:"block",width:"100%",background:"transparent",border:`1px solid ${C.border}`,
+                          color:C.muted,padding:"5px 8px",borderRadius:3,fontFamily:"monospace",
+                          fontSize:9,letterSpacing:1,marginBottom:4,textAlign:"left"}}>
+                  {p.label}
+                </button>
               ))}
             </div>
           </div>
         </div>
 
+        {/* Plots */}
         {plots&&(
           <div style={{marginTop:24}}>
-            <div style={{fontSize:10,color:C.accent1,letterSpacing:3,textTransform:"uppercase",marginBottom:12,borderBottom:`1px solid ${C.border}`,paddingBottom:6}}>Control Plots — Live Data</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:12}}>
+            <div style={{fontSize:10,color:C.accent1,letterSpacing:3,textTransform:"uppercase",
+                         marginBottom:12,borderBottom:`1px solid ${C.border}`,paddingBottom:6}}>
+              Control Plots — Live Data
+            </div>
+            <div className="pid-plot-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:12}}>
               <MiniPlot data1={he1} data2={he2} label1="Joint 1" label2="Joint 2" color1={C.accent1} color2={C.accent2} title="POSITION ERROR"  yLabel="rad" yMin={-2}          yMax={2}/>
               <MiniPlot data1={ht1} data2={ht2} label1="θ₁"      label2="θ₂"      color1={C.accent1} color2={C.accent2} title="JOINT ANGLES"    yLabel="rad" yMin={-Math.PI}    yMax={Math.PI}/>
               <MiniPlot data1={hu1} data2={hu2} label1="τ₁"      label2="τ₂"      color1={C.accent1} color2={C.accent2} title="CONTROL TORQUE"  yLabel="N·m" yMin={-MAX_TORQUE} yMax={MAX_TORQUE}/>
               <div style={{background:"#080c12",borderRadius:4,border:`1px solid ${C.border}`,padding:14}}>
                 <div style={{fontSize:10,fontWeight:"bold",color:C.text,marginBottom:12}}>SYSTEM STATUS</div>
-                {[["J1 Error",`${(e1*180/Math.PI).toFixed(2)}°`,Math.abs(e1)<0.05?C.accent1:C.error],["J2 Error",`${(e2*180/Math.PI).toFixed(2)}°`,Math.abs(e2)<0.05?C.accent2:C.error],["J1 Vel",`${(v1*180/Math.PI).toFixed(2)}°/s`,C.accent1],["J2 Vel",`${(v2*180/Math.PI).toFixed(2)}°/s`,C.accent2],["Time",`${time.toFixed(3)}s`,C.muted],["Status",settled?"SETTLED ✓":"CONVERGING…",settled?C.accent1:C.target]].map(([l,v,c])=>(
+                {[["J1 Error", `${(e1*180/Math.PI).toFixed(2)}°`, Math.abs(e1)<0.05?C.accent1:C.error],
+                  ["J2 Error", `${(e2*180/Math.PI).toFixed(2)}°`, Math.abs(e2)<0.05?C.accent2:C.error],
+                  ["J1 Vel",   `${(v1*180/Math.PI).toFixed(2)}°/s`, C.accent1],
+                  ["J2 Vel",   `${(v2*180/Math.PI).toFixed(2)}°/s`, C.accent2],
+                  ["Time",     `${time.toFixed(3)}s`, C.muted],
+                  ["Status",   settled?"SETTLED ✓":"CONVERGING…", settled?C.accent1:C.target],
+                ].map(([l,v,c])=>(
                   <div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:8,alignItems:"center"}}>
                     <span style={{color:C.muted,fontSize:9,letterSpacing:1}}>{l}</span>
                     <span style={{color:c,fontSize:11,fontWeight:"bold"}}>{v}</span>
                   </div>
                 ))}
                 <div style={{marginTop:10,padding:8,background:"#0a1520",borderRadius:4,borderLeft:`3px solid ${C.accent1}`}}>
-                  <div style={{color:C.muted,fontSize:8,lineHeight:1.7}}>u(t) = Kp·e + Ki·∫e dt + Kd·(de/dt)<br/><span style={{color:C.accent1}}>e(t) = θ_target − θ_current</span></div>
+                  <div style={{color:C.muted,fontSize:8,lineHeight:1.7}}>
+                    u(t) = Kp·e + Ki·∫e dt + Kd·(de/dt)<br/>
+                    <span style={{color:C.accent1}}>e(t) = θ_target − θ_current</span>
+                  </div>
                 </div>
               </div>
             </div>
