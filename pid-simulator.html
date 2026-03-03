@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PID Control Lab — 2-Link Robotic Arm</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0e14; }
+    input[type=range] { -webkit-appearance: none; appearance: none; background: #1e2d45; border-radius: 4px; height: 4px; outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; cursor: pointer; }
+    button:hover { opacity: 0.85; }
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr !important; }
+      .plot-grid  { grid-template-columns: 1fr !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const C = {
+      bg: "#0a0e14", panel: "#0f1520", border: "#1e2d45",
+      accent1: "#00ffc8", accent2: "#ff6b35", error: "#ff3d5a",
+      grid: "#111d2e", text: "#c8d8e8", muted: "#4a6080", target: "#ffe566",
+    };
+
+    const L1 = 120, L2 = 90;
+    const I1 = 2.0,  I2 = 0.8;
+    const B1 = 1.2,  B2 = 0.6;
+    const MAX_TORQUE   = 40;
+    const MAX_INTEGRAL = 30;
+    const HISTORY_LEN  = 400;
+
+    function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+    function makePID(kp, ki, kd) { return { kp, ki, kd, integral: 0, prevError: 0 }; }
+
+    function stepPID(pid, error, dt) {
+      if (!dt || dt <= 0 || !isFinite(dt)) return 0;
+      pid.integral = clamp(pid.integral + error * dt, -MAX_INTEGRAL, MAX_INTEGRAL);
+      const derivative = (error - pid.prevError) / dt;
+      pid.prevError = error;
+      const output = pid.kp * error + pid.ki * pid.integral + pid.kd * derivative;
+      if (!isFinite(output)) return 0;
+      return clamp(output, -MAX_TORQUE, MAX_TORQUE);
+    }
+
+    function resetPID(pid) { pid.integral = 0; pid.prevError = 0; }
+
+    function fk(t1, t2) {
+      const x1 = L1 * Math.cos(t1), y1 = L1 * Math.sin(t1);
+      return { x1, y1, x2: x1 + L2 * Math.cos(t1 + t2), y2: y1 + L2 * Math.sin(t1 + t2) };
+    }
+
+    /* ── Mini Plot ─────────────────────────────────────────────────────── */
+    function MiniPlot({ data1, data2, label1, label2, color1, color2, title, yLabel, yMin, yMax }) {
+      const canvasRef = useRef();
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        const W = canvas.width, H = canvas.height;
+        const PAD = { t: 24, r: 12, b: 28, l: 44 };
+        const PW = W - PAD.l - PAD.r, PH = H - PAD.t - PAD.b;
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = "#080c12"; ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+        for (let i = 0; i <= 4; i++) {
+          const y = PAD.t + (i / 4) * PH;
+          ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(PAD.l + PW, y); ctx.stroke();
+          ctx.fillStyle = C.muted; ctx.font = "10px 'Courier New'"; ctx.textAlign = "right";
+          ctx.fillText((yMax - (i / 4) * (yMax - yMin)).toFixed(1), PAD.l - 4, y + 3);
+        }
+        if (yMin < 0 && yMax > 0) {
+          const zy = PAD.t + PH * (yMax / (yMax - yMin));
+          ctx.strokeStyle = "#2a4060"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(PAD.l, zy); ctx.lineTo(PAD.l + PW, zy); ctx.stroke();
+        }
+        [[data1, color1], [data2, color2]].forEach(([data, color]) => {
+          if (!data || data.length < 2) return;
+          ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.shadowColor = color; ctx.shadowBlur = 4;
+          ctx.beginPath();
+          data.forEach((v, i) => {
+            const x = PAD.l + (i / (HISTORY_LEN - 1)) * PW;
+            const y = PAD.t + PH * (1 - (v - yMin) / (yMax - yMin));
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          });
+          ctx.stroke(); ctx.shadowBlur = 0;
+        });
+        ctx.fillStyle = C.text; ctx.font = "bold 11px 'Courier New'"; ctx.textAlign = "left";
+        ctx.fillText(title, PAD.l, 16);
+        [[label1, color1, 0], [label2, color2, 1]].forEach(([lbl, col, i]) => {
+          ctx.fillStyle = col; ctx.fillRect(W - 140 + i * 68, 8, 16, 2);
+          ctx.fillStyle = C.muted; ctx.font = "9px 'Courier New'"; ctx.textAlign = "left";
+          ctx.fillText(lbl, W - 120 + i * 68, 14);
+        });
+        ctx.save(); ctx.translate(10, H / 2); ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = C.muted; ctx.font = "9px 'Courier New'"; ctx.textAlign = "center";
+        ctx.fillText(yLabel, 0, 0); ctx.restore();
+      });
+      return <canvas ref={canvasRef} width={440} height={130}
+        style={{ width: "100%", borderRadius: 4, border: `1px solid ${C.border}` }} />;
+    }
+
+    /* ── Arm SVG ───────────────────────────────────────────────────────── */
+    function ArmCanvas({ t1, t2, targetT1, targetT2, trail }) {
+      const CX = 160, CY = 160;
+      const cur = fk(t1, t2), tgt = fk(targetT1, targetT2);
+      return (
+        <svg width="320" height="320" style={{ background: "#080c12", borderRadius: 8, border: `1px solid ${C.border}`, display: "block" }}>
+          {[60,120,180,210].map(r => <circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke={C.grid} strokeWidth={1}/>)}
+          {[0,45,90,135].map(a => {
+            const rad = a * Math.PI / 180;
+            return <line key={a} x1={CX-220*Math.cos(rad)} y1={CY-220*Math.sin(rad)} x2={CX+220*Math.cos(rad)} y2={CY+220*Math.sin(rad)} stroke={C.grid} strokeWidth={1}/>;
+          })}
+          {trail.length > 1 && <polyline points={trail.map(([x,y]) => `${CX+x},${CY-y}`).join(" ")} fill="none" stroke={C.accent1} strokeWidth={1.5} strokeOpacity={0.35}/>}
+          <line x1={CX} y1={CY} x2={CX+tgt.x1} y2={CY-tgt.y1} stroke={C.target} strokeWidth={3} strokeOpacity={0.25} strokeDasharray="6 4"/>
+          <line x1={CX+tgt.x1} y1={CY-tgt.y1} x2={CX+tgt.x2} y2={CY-tgt.y2} stroke={C.target} strokeWidth={2.5} strokeOpacity={0.25} strokeDasharray="5 4"/>
+          <circle cx={CX+tgt.x2} cy={CY-tgt.y2} r={7} fill="none" stroke={C.target} strokeWidth={1.5} strokeOpacity={0.6}/>
+          <circle cx={CX+tgt.x2} cy={CY-tgt.y2} r={2} fill={C.target} fillOpacity={0.6}/>
+          <line x1={CX} y1={CY} x2={CX+cur.x1} y2={CY-cur.y1} stroke={C.accent1} strokeWidth={5} strokeLinecap="round" filter="url(#glow1)"/>
+          <line x1={CX} y1={CY} x2={CX+cur.x1} y2={CY-cur.y1} stroke={C.accent1} strokeWidth={2} strokeLinecap="round"/>
+          <line x1={CX+cur.x1} y1={CY-cur.y1} x2={CX+cur.x2} y2={CY-cur.y2} stroke={C.accent2} strokeWidth={4} strokeLinecap="round" filter="url(#glow2)"/>
+          <line x1={CX+cur.x1} y1={CY-cur.y1} x2={CX+cur.x2} y2={CY-cur.y2} stroke={C.accent2} strokeWidth={2} strokeLinecap="round"/>
+          <circle cx={CX} cy={CY} r={9} fill={C.panel} stroke={C.accent1} strokeWidth={2.5}/>
+          <circle cx={CX} cy={CY} r={3} fill={C.accent1}/>
+          <circle cx={CX+cur.x1} cy={CY-cur.y1} r={7} fill={C.panel} stroke={C.accent2} strokeWidth={2}/>
+          <circle cx={CX+cur.x1} cy={CY-cur.y1} r={2.5} fill={C.accent2}/>
+          <circle cx={CX+cur.x2} cy={CY-cur.y2} r={6} fill={C.accent2} fillOpacity={0.3} stroke={C.accent2} strokeWidth={1.5}/>
+          <circle cx={CX+cur.x2} cy={CY-cur.y2} r={2.5} fill={C.accent2}/>
+          <defs>
+            <filter id="glow1"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="glow2"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+        </svg>
+      );
+    }
+
+    /* ── Slider ────────────────────────────────────────────────────────── */
+    function PIDSlider({ label, value, min, max, step, onChange, color, description }) {
+      return (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+            <span style={{ color:C.muted, fontFamily:"'Courier New'", fontSize:11, letterSpacing:2, textTransform:"uppercase" }}>{label}</span>
+            <span style={{ color, fontFamily:"'Courier New'", fontSize:13, fontWeight:"bold", minWidth:48, textAlign:"right" }}>{value.toFixed(2)}</span>
+          </div>
+          <input type="range" min={min} max={max} step={step} value={value}
+            onChange={e => onChange(parseFloat(e.target.value))}
+            style={{ width:"100%", accentColor:color, cursor:"pointer" }}/>
+          <div style={{ color:C.muted, fontSize:9, fontFamily:"'Courier New'", marginTop:2, opacity:0.7 }}>{description}</div>
+        </div>
+      );
+    }
+
+    /* ── Main App ──────────────────────────────────────────────────────── */
+    function PIDApp() {
+      const [t1,setT1]=useState(0.3); const [t2,setT2]=useState(0.5);
+      const [v1,setV1]=useState(0);   const [v2,setV2]=useState(0);
+      const [tgt1,setTgt1]=useState(0.8); const [tgt2,setTgt2]=useState(1.0);
+      const [kp1,setKp1]=useState(6.0); const [ki1,setKi1]=useState(0.3); const [kd1,setKd1]=useState(1.8);
+      const [kp2,setKp2]=useState(5.0); const [ki2,setKi2]=useState(0.2); const [kd2,setKd2]=useState(1.5);
+      const [running,setRunning]=useState(false);
+      const [showPlots,setShowPlots]=useState(false);
+      const [time,setTime]=useState(0);
+      const [h_e1,setHE1]=useState([]); const [h_e2,setHE2]=useState([]);
+      const [h_u1,setHU1]=useState([]); const [h_u2,setHU2]=useState([]);
+      const [h_t1,setHT1]=useState([]); const [h_t2,setHT2]=useState([]);
+      const [trail,setTrail]=useState([]);
+
+      const simRef = useRef({
+        t1:0.3, t2:0.5, v1:0, v2:0,
+        pid1:makePID(6,0.3,1.8), pid2:makePID(5,0.2,1.5),
+        h_e1:[], h_e2:[], h_u1:[], h_u2:[], h_t1:[], h_t2:[],
+        trail:[], time:0, tgt1:0.8, tgt2:1.0,
+      });
+      const rafRef = useRef();
+      const lastTimeRef = useRef(null);
+
+      useEffect(()=>{ simRef.current.pid1.kp=kp1; simRef.current.pid1.ki=ki1; simRef.current.pid1.kd=kd1; },[kp1,ki1,kd1]);
+      useEffect(()=>{ simRef.current.pid2.kp=kp2; simRef.current.pid2.ki=ki2; simRef.current.pid2.kd=kd2; },[kp2,ki2,kd2]);
+      useEffect(()=>{ simRef.current.tgt1=tgt1; simRef.current.tgt2=tgt2; },[tgt1,tgt2]);
+
+      const tick = useCallback((timestamp) => {
+        if (lastTimeRef.current === null) {
+          lastTimeRef.current = timestamp;
+          rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
+        const elapsed = Math.min((timestamp - lastTimeRef.current) / 1000, 0.05);
+        lastTimeRef.current = timestamp;
+        if (elapsed < 0.001) { rafRef.current = requestAnimationFrame(tick); return; }
+
+        const s = simRef.current;
+        const STEPS = 4, dt = elapsed / STEPS;
+        for (let i = 0; i < STEPS; i++) {
+          const e1 = s.tgt1 - s.t1, e2 = s.tgt2 - s.t2;
+          const u1 = stepPID(s.pid1, e1, dt), u2 = stepPID(s.pid2, e2, dt);
+          s.v1 += ((u1 - B1*s.v1) / I1) * dt;
+          s.v2 += ((u2 - B2*s.v2) / I2) * dt;
+          s.t1 += s.v1*dt; s.t2 += s.v2*dt; s.time += dt;
+        }
+        const {x2,y2} = fk(s.t1, s.t2);
+        s.trail = [...s.trail.slice(-150), [x2,y2]];
+        const e1f=s.tgt1-s.t1, e2f=s.tgt2-s.t2;
+        s.h_e1=[...s.h_e1.slice(-(HISTORY_LEN-1)), e1f];
+        s.h_e2=[...s.h_e2.slice(-(HISTORY_LEN-1)), e2f];
+        s.h_u1=[...s.h_u1.slice(-(HISTORY_LEN-1)), clamp(s.pid1.kp*e1f,-MAX_TORQUE,MAX_TORQUE)];
+        s.h_u2=[...s.h_u2.slice(-(HISTORY_LEN-1)), clamp(s.pid2.kp*e2f,-MAX_TORQUE,MAX_TORQUE)];
+        s.h_t1=[...s.h_t1.slice(-(HISTORY_LEN-1)), s.t1];
+        s.h_t2=[...s.h_t2.slice(-(HISTORY_LEN-1)), s.t2];
+
+        setT1(s.t1); setT2(s.t2); setV1(s.v1); setV2(s.v2);
+        setTime(s.time); setTrail([...s.trail]);
+        setHE1([...s.h_e1]); setHE2([...s.h_e2]);
+        setHU1([...s.h_u1]); setHU2([...s.h_u2]);
+        setHT1([...s.h_t1]); setHT2([...s.h_t2]);
+        rafRef.current = requestAnimationFrame(tick);
+      }, []);
+
+      const startSim = () => {
+        if (running) return;
+        setRunning(true); setShowPlots(true);
+        const s = simRef.current;
+        s.t1=t1; s.t2=t2; s.v1=0; s.v2=0;
+        resetPID(s.pid1); resetPID(s.pid2);
+        s.h_e1=[]; s.h_e2=[]; s.h_u1=[]; s.h_u2=[]; s.h_t1=[]; s.h_t2=[];
+        s.trail=[]; s.time=0;
+        lastTimeRef.current = null;
+        rafRef.current = requestAnimationFrame(tick);
+      };
+
+      const stopSim = () => { setRunning(false); if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+
+      const resetSim = () => {
+        stopSim();
+        setT1(0.3); setT2(0.5); setV1(0); setV2(0); setTime(0); setTrail([]);
+        setHE1([]); setHE2([]); setHU1([]); setHU2([]); setHT1([]); setHT2([]);
+        setShowPlots(false);
+        const s=simRef.current; s.t1=0.3; s.t2=0.5; s.v1=0; s.v2=0;
+        resetPID(s.pid1); resetPID(s.pid2);
+      };
+
+      const e1=tgt1-t1, e2=tgt2-t2;
+      const settled = Math.abs(e1)<0.01 && Math.abs(e2)<0.01 && Math.abs(v1)<0.01 && Math.abs(v2)<0.01;
+
+      return (
+        <div style={{ background:C.bg, minHeight:"100vh", color:C.text, fontFamily:"'Courier New',monospace", padding:"0 0 40px" }}>
+          {/* Header */}
+          <div style={{ background:C.panel, borderBottom:`1px solid ${C.border}`, padding:"16px 28px", display:"flex", alignItems:"center", gap:16 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background:C.accent1, boxShadow:`0 0 8px ${C.accent1}` }}/>
+            <div>
+              <div style={{ fontSize:17, fontWeight:"bold", letterSpacing:3, color:C.accent1, textTransform:"uppercase" }}>PID Control Lab</div>
+              <div style={{ fontSize:10, color:C.muted, letterSpacing:2, marginTop:2 }}>2-LINK ROBOTIC ARM · POSITION CONTROL · INTERACTIVE SIMULATOR</div>
+            </div>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
+              <span style={{ fontSize:10, color:C.muted }}>T = </span>
+              <span style={{ fontSize:13, color:C.accent1, minWidth:52 }}>{time.toFixed(2)}s</span>
+              {settled && running && <span style={{ fontSize:9, background:"#002a1a", color:C.accent1, border:`1px solid ${C.accent1}`, padding:"2px 8px", borderRadius:3, letterSpacing:2 }}>SETTLED</span>}
+            </div>
+          </div>
+
+          <div style={{ maxWidth:1100, margin:"0 auto", padding:"24px 20px" }}>
+            {/* Concept bar */}
+            <div style={{ background:"#0a1520", border:`1px solid ${C.border}`, borderRadius:6, padding:"12px 18px", marginBottom:22, display:"flex", gap:24, flexWrap:"wrap" }}>
+              {[["P — Proportional","Reacts to current error. Higher Kp = faster response but may overshoot.",C.accent1],
+                ["I — Integral","Eliminates steady-state offset by accumulating error over time. Too high = oscillation.",C.accent2],
+                ["D — Derivative","Dampens overshoot by reacting to rate of error change. Too high = noise amplification.","#a78bfa"]
+              ].map(([title,desc,col]) => (
+                <div key={title} style={{ flex:"1 1 200px" }}>
+                  <div style={{ color:col, fontSize:11, fontWeight:"bold", letterSpacing:1, marginBottom:3 }}>{title}</div>
+                  <div style={{ color:C.muted, fontSize:10, lineHeight:1.5 }}>{desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Main grid */}
+            <div className="main-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 340px", gap:18, alignItems:"start" }}>
+              {[
+                { joint:"Joint 1 — Base",  color:C.accent1, kp:kp1,setKp:setKp1, ki:ki1,setKi:setKi1, kd:kd1,setKd:setKd1, tgt:tgt1,setTgt:setTgt1, t:t1, e:e1, lbl:"θ₁" },
+                { joint:"Joint 2 — Elbow", color:C.accent2, kp:kp2,setKp:setKp2, ki:ki2,setKi:setKi2, kd:kd2,setKd:setKd2, tgt:tgt2,setTgt:setTgt2, t:t2, e:e2, lbl:"θ₂" },
+              ].map(({ joint,color,kp,setKp,ki,setKi,kd,setKd,tgt,setTgt,t,e,lbl }) => (
+                <div key={joint} style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:8, padding:18 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+                    <div style={{ width:10, height:10, borderRadius:"50%", background:color }}/>
+                    <span style={{ color, fontSize:12, letterSpacing:2, textTransform:"uppercase" }}>{joint}</span>
+                  </div>
+                  <PIDSlider label="Kp" value={kp} min={0} max={20} step={0.1} onChange={setKp} color={color} description="Proportional gain"/>
+                  <PIDSlider label="Ki" value={ki} min={0} max={5}  step={0.05} onChange={setKi} color={color} description="Integral gain"/>
+                  <PIDSlider label="Kd" value={kd} min={0} max={8}  step={0.05} onChange={setKd} color={color} description="Derivative gain"/>
+                  <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12, marginTop:8 }}>
+                    <div style={{ fontSize:10, color:C.muted, marginBottom:6 }}>TARGET ANGLE ({lbl})</div>
+                    <PIDSlider label={`${lbl} target`} value={tgt} min={-Math.PI} max={Math.PI} step={0.05} onChange={setTgt} color={C.target} description={`${(tgt*180/Math.PI).toFixed(1)}°`}/>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8, fontSize:10 }}>
+                    <div style={{ background:"#0a1520", padding:8, borderRadius:4 }}>
+                      <div style={{ color:C.muted }}>CURRENT {lbl}</div>
+                      <div style={{ color, fontSize:13 }}>{(t*180/Math.PI).toFixed(1)}°</div>
+                    </div>
+                    <div style={{ background:"#0a1520", padding:8, borderRadius:4 }}>
+                      <div style={{ color:C.muted }}>ERROR</div>
+                      <div style={{ color:Math.abs(e)<0.05?color:C.error, fontSize:13 }}>{(e*180/Math.PI).toFixed(1)}°</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Arm + controls */}
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                <ArmCanvas t1={t1} t2={t2} targetT1={tgt1} targetT2={tgt2} trail={trail}/>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[
+                    { label:running?"■ STOP":"▶ RUN", action:running?stopSim:startSim, color:running?C.error:C.accent1 },
+                    { label:"↺ RESET", action:resetSim, color:C.muted },
+                  ].map(({label,action,color})=>(
+                    <button key={label} onClick={action} style={{ flex:1, background:"transparent", border:`1px solid ${color}`, color, padding:"8px 0", borderRadius:4, cursor:"pointer", fontFamily:"'Courier New'", fontSize:11, letterSpacing:2 }}>{label}</button>
+                  ))}
+                </div>
+                <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:6, padding:12 }}>
+                  <div style={{ fontSize:9, color:C.muted, letterSpacing:1, marginBottom:8 }}>PRESETS</div>
+                  {[
+                    { label:"P Only (no I, no D)",    kp1:6,  ki1:0,   kd1:0,   kp2:5,  ki2:0,   kd2:0   },
+                    { label:"Well-tuned PID",         kp1:6,  ki1:0.3, kd1:1.8, kp2:5,  ki2:0.2, kd2:1.5 },
+                    { label:"Aggressive (overshoot)", kp1:15, ki1:1,   kd1:0.5, kp2:12, ki2:0.8, kd2:0.4 },
+                    { label:"Overdamped (sluggish)",  kp1:2,  ki1:0.1, kd1:4,   kp2:2,  ki2:0.1, kd2:3.5 },
+                  ].map(p=>(
+                    <button key={p.label} onClick={()=>{ setKp1(p.kp1);setKi1(p.ki1);setKd1(p.kd1);setKp2(p.kp2);setKi2(p.ki2);setKd2(p.kd2); }}
+                      style={{ display:"block", width:"100%", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, padding:"5px 8px", borderRadius:3, cursor:"pointer", fontFamily:"'Courier New'", fontSize:9, letterSpacing:1, marginBottom:4, textAlign:"left" }}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Plots */}
+            {showPlots && (
+              <div style={{ marginTop:28 }}>
+                <div style={{ fontSize:11, color:C.accent1, letterSpacing:3, textTransform:"uppercase", marginBottom:14, borderBottom:`1px solid ${C.border}`, paddingBottom:8 }}>
+                  Control Plots — Live Data
+                </div>
+                <div className="plot-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+                  <MiniPlot data1={h_e1} data2={h_e2} label1="Joint 1" label2="Joint 2" color1={C.accent1} color2={C.accent2} title="POSITION ERROR"          yLabel="Error (rad)"  yMin={-2}          yMax={2}/>
+                  <MiniPlot data1={h_t1} data2={h_t2} label1="θ₁ actual" label2="θ₂ actual" color1={C.accent1} color2={C.accent2} title="JOINT ANGLES"        yLabel="Angle (rad)"  yMin={-Math.PI}    yMax={Math.PI}/>
+                  <MiniPlot data1={h_u1} data2={h_u2} label1="τ₁" label2="τ₂"               color1={C.accent1} color2={C.accent2} title="CONTROL OUTPUT (TORQUE)" yLabel="Torque (N·m)" yMin={-MAX_TORQUE} yMax={MAX_TORQUE}/>
+                  <div style={{ background:"#080c12", borderRadius:4, border:`1px solid ${C.border}`, padding:16 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:C.text, marginBottom:14 }}>SYSTEM STATUS</div>
+                    {[
+                      ["Joint 1 Error",    `${(e1*180/Math.PI).toFixed(2)}°`,     Math.abs(e1)<0.05?C.accent1:C.error],
+                      ["Joint 2 Error",    `${(e2*180/Math.PI).toFixed(2)}°`,     Math.abs(e2)<0.05?C.accent2:C.error],
+                      ["J1 Velocity",      `${(v1*180/Math.PI).toFixed(2)}°/s`,   C.accent1],
+                      ["J2 Velocity",      `${(v2*180/Math.PI).toFixed(2)}°/s`,   C.accent2],
+                      ["Sim Time",         `${time.toFixed(3)}s`,                 C.muted],
+                      ["Status",           settled?"SETTLED ✓":"CONVERGING…",     settled?C.accent1:C.target],
+                    ].map(([lbl,val,col])=>(
+                      <div key={lbl} style={{ display:"flex", justifyContent:"space-between", marginBottom:10, alignItems:"center" }}>
+                        <span style={{ color:C.muted, fontSize:10, letterSpacing:1 }}>{lbl}</span>
+                        <span style={{ color:col, fontSize:12, fontWeight:"bold" }}>{val}</span>
+                      </div>
+                    ))}
+                    <div style={{ marginTop:12, padding:10, background:"#0a1520", borderRadius:4, borderLeft:`3px solid ${C.accent1}` }}>
+                      <div style={{ color:C.muted, fontSize:9, lineHeight:1.7 }}>
+                        PID formula:<br/>
+                        <span style={{ color:C.accent1 }}>u(t) = Kp·e + Ki·∫e dt + Kd·(de/dt)</span><br/>
+                        where e(t) = θ_target − θ_current
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<PIDApp />);
+  </script>
+</body>
+</html>
